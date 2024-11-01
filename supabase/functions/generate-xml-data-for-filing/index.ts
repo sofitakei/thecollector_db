@@ -147,26 +147,27 @@ const propertyXML = property => ({
   },
 })
 const ownerXML = owner => {
-  return {
-    'boir:BeneficialOwner': {
-      'boir:ActivityPartyTypeCode': '64', //Must equal "64" to associate this Party information with the Beneficial Owner
-      'boir:IndividualBirthDateText': owner.birth_date.replaceAll('-', ''), //YYYYMMDD
-      ...party(owner),
-      ...address(owner),
-      ...partyid(owner),
-    }, //end boir:BeneficialOwner)
-  }
-}
+  return owner.fincen_id
+    ? { 'boir:FinCENID': owner.fincen_id }
+    : {
+        'boir:ActivityPartyTypeCode': '64', //Must equal "64" to associate this Party information with the Beneficial Owner
+        'boir:IndividualBirthDateText': owner.birth_date.replaceAll('-', ''), //YYYYMMDD
+        ...party(owner),
+        ...address(owner),
+        ...partyid(owner),
+      }
+} //end boir:BeneficialOwner)
 
-const boardXML = board => ({
-  'boir:Applicant': {
-    'boir:ActivityPartyTypeCode': '63', //Must equal "63" to associate this Party information
-    'boir:IndividualBirthDateText': board.birth_date.replaceAll('-', ''),
-    ...party(board),
-    ...address(board),
-    ...partyid(board),
-  },
-})
+const boardXML = board =>
+  board.fincen_id
+    ? { 'boir:FinCENID': board.fincen_id }
+    : {
+        'boir:ActivityPartyTypeCode': '63', //Must equal "63" to associate this Party information
+        'boir:IndividualBirthDateText': board.birth_date.replaceAll('-', ''),
+        ...party(board),
+        ...address(board),
+        ...partyid(board),
+      }
 
 // item.property_role ==='board_member' ? 'ce:ResidentialAddressIndicator': {
 //   '@xmlns:ce': 'http://www.fincen.gov/bsa/commonelements/2021-01-01',
@@ -177,15 +178,22 @@ const fillForm = async property_filing => {
   //return byte stream
   const builder = new XMLBuilder()
   const { filing_type, filing } = property_filing
-  const owners = filing.users
-    .filter(({ property_role }) => property_role === 'owner')
-    .map(ownerXML)
 
-  const board = filing.users
-    .filter(({ property_role }) => property_role === 'board_member')
-    .map(boardXML)
+  const owners = {
+    'boir:BeneficialOwner': [
+      filing.users
+        .filter(({ property_role }) => property_role === 'owner')
+        .map(ownerXML),
+    ],
+  }
 
-  const users = Object.assign({}, {}, ...[...board, ...owners])
+  const board = {
+    'boir:Applicant': [
+      filing.users
+        .filter(({ property_role }) => property_role === 'board_member')
+        .map(boardXML),
+    ],
+  }
 
   const indicator_map = {
     initial: 'ce:InitialReportIndicator',
@@ -231,11 +239,13 @@ const fillForm = async property_filing => {
           ...filingIndicator,
         },
         ...propertyXML(filing.property),
-        ...users,
+
+        ...board,
+        ...owners,
       },
     },
   }
-
+  console.log('converting object to xml', toConvert)
   const doc = create(toConvert)
   const outputXML = doc.end({ prettyPrint: true })
   return outputXML
@@ -254,15 +264,11 @@ Deno.serve(async req => {
 
   const { data, error } = await supaClient.storage
     .from('document_images')
-    .upload(
-      `${property_id}/filing/${id}/${id}_${property_id}_filing.xml`,
-      result,
-      {
-        contentType: 'application/xml',
-        upsert: true,
-      }
-    )
-  console.log({ data, error })
+    .upload(`${property_id}/filing/${id}/filing.xml`, result, {
+      contentType: 'application/xml',
+      upsert: true,
+    })
+  //console.log({ data, error })
   return new Response(result, {
     headers: { ...corsHeaders, 'Content-Type': 'application/xml' },
     status: 200,
