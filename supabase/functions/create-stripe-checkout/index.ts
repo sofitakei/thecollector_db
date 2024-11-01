@@ -19,10 +19,27 @@ Deno.serve(async req => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
-  const { product, priceId, user_id, url, property_id } = await req.json()
+  const {
+    product,
+    priceId,
+    user_id,
+    url,
+    property_id,
+    property_filing_id,
+    remove_payments,
+  } = await req.json()
 
   const YOUR_DOMAIN = url
   try {
+    if (remove_payments) {
+      console.log('remove any existing payments')
+      await stripe.checkout.sessions.expire(remove_payments.stripe_session_id)
+      await supaClient
+        .from('payment')
+        .update({ deleted: new Date() })
+        .eq('id', remove_payments.id)
+    }
+
     console.log('create payment')
 
     const { data, error } = await supaClient
@@ -31,7 +48,7 @@ Deno.serve(async req => {
         product,
         status: 'open',
         created_by_user_id: user_id,
-        property_id,
+        property_filing_id,
         method: 'stripe-checkout',
       })
       .select()
@@ -46,7 +63,7 @@ Deno.serve(async req => {
     console.log('create session')
     const session = await stripe.checkout.sessions.create({
       payment_intent_data: {
-        metadata: { property_id, payment_id: data[0].id },
+        metadata: { property_id, property_filing_id, payment_id: data[0].id },
       },
       line_items: [
         {

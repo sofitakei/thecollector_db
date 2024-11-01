@@ -22,7 +22,7 @@ Deno.serve(async req => {
   }
 
   // create a new user
-  const { priceId, product, property_id, user_id } = await req.json()
+  const { priceId, product, property_filing_id, user_id } = await req.json()
   try {
     // Get the authorization header from the request.
     // When you invoke the function via the client library it will automatically pass the authenticated user's JWT.
@@ -41,7 +41,7 @@ Deno.serve(async req => {
         product,
         status: 'open',
         created_by_user_id: user_id,
-        property_id: property_id,
+        property_filing_id,
         method: 'stripe-invoice',
       })
       .select()

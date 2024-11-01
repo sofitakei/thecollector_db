@@ -7,15 +7,14 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js'
 import {
   corsHeaders,
-  getCurrentUser,
-  getUserIsAdmin,
+  getUserPermissionsForProperty,
 } from '../_shared/supabase.ts'
 
 const supaClient = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 )
-console.log('Hello from get properties for user!')
+console.log('Hello from prepare user filing!')
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') {
@@ -23,41 +22,55 @@ Deno.serve(async req => {
   }
 
   const authHeader = req.headers.get('Authorization')!
-  const { userProfile, user } = await getCurrentUser(authHeader)
-  const isAdmin = await getUserIsAdmin(user?.id)
-  console.log('is admin', isAdmin)
-  let query = supaClient
-    .from('userproperty')
-    .select(
-      '*, properties!inner(*, userproperty(property_role, userproperty_filing(*)), property_filing(*, payment(*))))'
-    )
-    .is('deleted', null)
-    .is('properties.deleted', null)
-    .is('properties.property_filing.payment.deleted', null)
-    .eq('user_id', userProfile?.id)
-  if (isAdmin) {
-    query = supaClient
-      .from('properties')
-      .select(
-        '*, userproperty(property_role,userproperty_filing(*)), property_filing(*, payment(*)))'
-      )
-      .is('deleted', null)
-      .is('userproperty.deleted', null)
-      .is('property_filing.payment.deleted', null)
-  }
-  const { data, error } = await query
 
-  if (error !== null) {
-    console.log('error retrieving properties', error)
-    return new Response(JSON.stringify(error), {
+  const {
+    last_updated_by_user_id,
+    filing_type,
+    filing,
+    property_id,
+    filing_id,
+  } = await req.json()
+
+  const { update } = await getUserPermissionsForProperty(
+    authHeader,
+    property_id
+  )
+
+  if (!update) {
+    return new Response(JSON.stringify({ message: 'not allowed to save' }), {
       headers: corsHeaders,
       status: 400,
     })
   }
 
-  return new Response(JSON.stringify(data), {
+  const { data: upData, error: upError } = await supaClient
+    .from('property_filing')
+    .update({
+      last_updated: new Date(),
+      last_updated_by_user_id,
+      status: 'complete',
+      filing_type,
+      filing,
+    })
+    .eq('id', filing_id)
+    .select()
+
+  if (upError && upError !== null) {
+    console.log('error filing property information', upError)
+    return new Response(JSON.stringify(upError), {
+      headers: corsHeaders,
+      status: 400,
+    })
+  }
+  console.log('property_filing created', upData)
+  supaClient.functions.invoke('generate-xml-data-for-filing', {
+    body: {
+      property_filing: upData[0],
+    },
+  })
+
+  return new Response(JSON.stringify(upData), {
     headers: corsHeaders,
-    status: 200,
   })
 })
 
@@ -66,7 +79,7 @@ Deno.serve(async req => {
   1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
   2. Make an HTTP request:
 
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/get-properties-for-user' \
+  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/upload-id-photo' \
     --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' \
     --header 'Content-Type: application/json' \
     --data '{"name":"Functions"}'
